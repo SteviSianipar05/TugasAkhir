@@ -18,7 +18,7 @@ $topic = $input["topic"];
 $payload = $input["payload"];
 
 // Node-RED HTTP Endpoint
-$nodeRedUrl = "http://10.128.45.199:1880/mqtt_publish";
+$nodeRedUrl = "http://10.23.83.199:1880/mqtt_publish";
 
 $ch = curl_init($nodeRedUrl);
 curl_setopt($ch, CURLOPT_POST, true);

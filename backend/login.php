@@ -11,7 +11,7 @@ $email = $data['email'];
 $password = $data['password'];
 
 if (!$email || !$password) {
-    echo json_encode(["success" => false, "message" => "Email dan password wajib diisi"]);
+    echo json_encode(["success" => false, "message" => "Email and password are required"]);
     exit;
 }
 
@@ -25,7 +25,7 @@ if ($result->num_rows > 0) {
     if (password_verify($password, $user['password'])) {
         echo json_encode([
             "success" => true,
-            "message" => "Login berhasil",
+            "message" => "Login successful",
             "user" => [
                 "id" => $user["id"],
                 "name" => $user["name"],
@@ -33,9 +33,9 @@ if ($result->num_rows > 0) {
             ]
         ]);
     } else {
-        echo json_encode(["success" => false, "message" => "Password salah"]);
+        echo json_encode(["success" => false, "message" => "Invalid password"]);
     }
 } else {
-    echo json_encode(["success" => false, "message" => "Email tidak ditemukan"]);
+    echo json_encode(["success" => false, "message" => "EEmail not found"]);
 }
 ?>

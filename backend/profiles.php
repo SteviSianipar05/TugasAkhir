@@ -264,7 +264,7 @@ if ($type === 'history') {
 // ===================================================
 if ($type === 'sensor') {
     // NOTE: ensure these are strings
-    $influx_host = "10.128.45.199";
+    $influx_host = "10.23.83.199";
     $influx_port = "8086";
     $influx_db   = "iot_data";
     $measurement = "phsensor";

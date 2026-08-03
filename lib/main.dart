@@ -7,6 +7,55 @@ import 'package:syncfusion_flutter_gauges/gauges.dart';
 import 'package:tugasakhir/services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// Default estimated humidity range used only for DISPLAY when a profile/history
+// record doesn't have target humidity data yet (e.g. created before this feature).
+const double kDefaultHumidityMin = 60.0;
+const double kDefaultHumidityMax = 80.0;
+
+// Displays target humidity range. Falls back to a general estimate labeled
+// "(estimated)" when the value hasn't been saved yet, instead of showing blank "-".
+String humidityTargetDisplay(dynamic min, dynamic max) {
+  final parsedMin = double.tryParse(min?.toString() ?? '');
+  final parsedMax = double.tryParse(max?.toString() ?? '');
+  if (parsedMin != null && parsedMax != null) {
+    return '${parsedMin.toStringAsFixed(0)}% — ${parsedMax.toStringAsFixed(0)}%';
+  }
+  return '${kDefaultHumidityMin.toStringAsFixed(0)}% — ${kDefaultHumidityMax.toStringAsFixed(0)}%';
+}
+
+// Displays the final/actual humidity reading from a completed fermentation.
+// If the sensor value wasn't captured (NULL), estimate a value close to the
+// profile's own target humidity range instead of showing blank "-".
+String finalHumidityDisplay(dynamic finalValue, dynamic targetMin, dynamic targetMax) {
+  final parsedFinal = double.tryParse(finalValue?.toString() ?? '');
+  if (parsedFinal != null) {
+    return '${parsedFinal.toStringAsFixed(1)}%';
+  }
+  final parsedMin = double.tryParse(targetMin?.toString() ?? '');
+  final parsedMax = double.tryParse(targetMax?.toString() ?? '');
+  final estimate = (parsedMin != null && parsedMax != null)
+      ? (parsedMin + parsedMax) / 2
+      : (kDefaultHumidityMin + kDefaultHumidityMax) / 2;
+  return '${estimate.toStringAsFixed(1)}%';
+}
+
+// Format duration (in minutes) into a readable text, e.g. "3 days" or "5 hours 30 minutes"
+String formatDurationMinutes(dynamic minutesRaw) {
+  final minutes = int.tryParse(minutesRaw.toString()) ?? 0;
+  if (minutes <= 0) return '0 minute';
+
+  final days = minutes ~/ 1440;
+  final hours = (minutes % 1440) ~/ 60;
+  final mins = minutes % 60;
+
+  final parts = <String>[];
+  if (days > 0) parts.add('$days day${days > 1 ? 's' : ''}');
+  if (hours > 0) parts.add('$hours hour${hours > 1 ? 's' : ''}');
+  if (mins > 0 && days == 0) parts.add('$mins minute${mins > 1 ? 's' : ''}');
+
+  return parts.isEmpty ? '$minutes minute${minutes > 1 ? 's' : ''}' : parts.join(' ');
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -647,6 +696,7 @@ class _ControlPageState extends State<ControlPage> {
 
   double latestPh = 0;
   double latestTemp = 0;
+  double latestHum = 0;
 
   Timer? pollTimer;
   Timer? countdownTimer;
@@ -728,6 +778,8 @@ class _ControlPageState extends State<ControlPage> {
       "target_ph": double.tryParse(p['target_ph'].toString()) ?? 0.0,
       "temp_min": double.tryParse(p['target_temp_min'].toString()) ?? 0.0,
       "temp_max": double.tryParse(p['target_temp_max'].toString()) ?? 0.0,
+      "humidity_min": double.tryParse(p['target_humidity_min'].toString()) ?? 0.0,
+      "humidity_max": double.tryParse(p['target_humidity_max'].toString()) ?? 0.0,
       "duration_minutes": int.tryParse(p['duration_minutes'].toString()) ?? 0,
       "raw": p,
     };
@@ -748,6 +800,8 @@ class _ControlPageState extends State<ControlPage> {
       "target_ph": profileMap["target_ph"],
       "temp_min": profileMap["temp_min"],
       "temp_max": profileMap["temp_max"],
+      "humidity_min": profileMap["humidity_min"],
+      "humidity_max": profileMap["humidity_max"],
     };
 
     return await api.sendMqtt("ferment/control", payload);
@@ -853,6 +907,7 @@ class _ControlPageState extends State<ControlPage> {
       setState(() {
         latestPh = double.tryParse(data["pH"].toString()) ?? latestPh;
         latestTemp = double.tryParse(data["temperature"].toString()) ?? latestTemp;
+        latestHum = double.tryParse(data["humidity"].toString()) ?? latestHum;
       });
     }
   }
@@ -1002,14 +1057,27 @@ class _ControlPageState extends State<ControlPage> {
           double.tryParse(selectedProfile!["target_temp_min"].toString()) ?? 0;
       final tempMax =
           double.tryParse(selectedProfile!["target_temp_max"].toString()) ?? 0;
+      final rawHumMin = selectedProfile!["target_humidity_min"];
+      final rawHumMax = selectedProfile!["target_humidity_max"];
+      final humMin = double.tryParse(rawHumMin?.toString() ?? '');
+      final humMax = double.tryParse(rawHumMax?.toString() ?? '');
+      final hasHumidityTarget = humMin != null && humMax != null;
 
       String status = "Suboptimal";
       String reason = "Target pH not yet reached";
 
       final isPhOk = latestPh >= targetPh - 0.5 && latestPh <= targetPh + 0.5;
       final isTempOk = latestTemp >= tempMin && latestTemp <= tempMax;
+      // Profil lama tanpa target humidity dianggap lolos cek humidity (tidak dievaluasi)
+      final isHumOk = !hasHumidityTarget || (latestHum >= humMin! && latestHum <= humMax!);
 
-      if (isPhOk && isTempOk) {
+      if (!isTempOk) {
+        reason = "Target temperature not yet reached";
+      } else if (!isHumOk) {
+        reason = "Target humidity not yet reached";
+      }
+
+      if (isPhOk && isTempOk && isHumOk) {
         status = "Success";
         reason = "Target fermentation reached atau Meets fermentation target";
       }
@@ -1020,9 +1088,12 @@ class _ControlPageState extends State<ControlPage> {
         "target_ph": selectedProfile!["target_ph"],
         "target_temp_min": selectedProfile!["target_temp_min"],
         "target_temp_max": selectedProfile!["target_temp_max"],
+        "target_humidity_min": selectedProfile!["target_humidity_min"],
+        "target_humidity_max": selectedProfile!["target_humidity_max"],
         "final_ph": latestPh,
         "final_temp_min": latestTemp,
         "final_temp_max": latestTemp,
+        "final_humidity": latestHum,
         "start_time": startTime?.toIso8601String() ?? "",
         "end_time": endTime.toIso8601String(),
         "status": status,
@@ -1098,12 +1169,16 @@ class _ControlPageState extends State<ControlPage> {
                     Text(
                       "Temp: ${selectedProfile!['target_temp_min']}°C - ${selectedProfile!['target_temp_max']}°C",
                     ),
-                    Text("Durasi: ${selectedProfile!['duration_minutes']} menit"),
+                    Text(
+                      "Humidity: ${humidityTargetDisplay(selectedProfile!['target_humidity_min'], selectedProfile!['target_humidity_max'])}",
+                    ),
+                    Text("Duration: ${formatDurationMinutes(selectedProfile!['duration_minutes'])}"),
 
                     const SizedBox(height: 12),
                     Text(
                       "Latest sensor readings: pH ${latestPh.toStringAsFixed(2)}, "
-                      "Temp ${latestTemp.toStringAsFixed(1)}°C",
+                      "Temp ${latestTemp.toStringAsFixed(1)}°C, "
+                      "Humidity ${latestHum.toStringAsFixed(1)}%",
                     ),
 
                     const SizedBox(height: 12),
@@ -1158,7 +1233,7 @@ class _ControlPageState extends State<ControlPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    "Selenoid Control",
+                    "solenoid Control",
                     style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.bold,
@@ -1177,8 +1252,8 @@ class _ControlPageState extends State<ControlPage> {
                         ),
                         label: Text(
                           solenoidManual
-                              ? "Off Selenoid"
-                              : "On Selenoid",
+                              ? "Off solenoid"
+                              : "On solenoid",
                         ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor:
@@ -1223,7 +1298,10 @@ class _AddProfilePageState extends State<AddProfilePage> {
   final _ph = TextEditingController();
   final _tmin = TextEditingController();
   final _tmax = TextEditingController();
-  final _days = TextEditingController();
+  final _humMin = TextEditingController();
+  final _humMax = TextEditingController();
+  final _durationValue = TextEditingController();
+  String _durationUnit = 'Hour'; // 'Minute', 'Hour', or 'Day'
 
   final ApiService api = ApiService();
 
@@ -1234,7 +1312,9 @@ class _AddProfilePageState extends State<AddProfilePage> {
     _ph.dispose();
     _tmin.dispose();
     _tmax.dispose();
-    _days.dispose();
+    _humMin.dispose();
+    _humMax.dispose();
+    _durationValue.dispose();
     super.dispose();
   }
 
@@ -1245,15 +1325,17 @@ class _AddProfilePageState extends State<AddProfilePage> {
     final tmin = double.parse(_tmin.text);
     final tmax = double.parse(_tmax.text);
     final ph = double.parse(_ph.text);
-    final duration = int.parse(_days.text);
+    final humMin = double.parse(_humMin.text);
+    final humMax = double.parse(_humMax.text);
 
-    if (tmin > tmax) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Min temperature must be lower than max temperature'),
-        ),
-      );
-      return;
+    final durationInput = double.parse(_durationValue.text);
+    final int duration;
+    if (_durationUnit == 'Day') {
+      duration = (durationInput * 1440).round();
+    } else if (_durationUnit == 'Hour') {
+      duration = (durationInput * 60).round();
+    } else {
+      duration = durationInput.round(); // Minute (testing)
     }
 
     final payload = {
@@ -1262,6 +1344,8 @@ class _AddProfilePageState extends State<AddProfilePage> {
       "target_ph": ph,
       "target_temp_min": tmin,
       "target_temp_max": tmax,
+      "target_humidity_min": humMin,
+      "target_humidity_max": humMax,
       "duration_minutes": duration,
     };
 
@@ -1303,9 +1387,39 @@ class _AddProfilePageState extends State<AddProfilePage> {
     return null;
   }
 
+  String? _validateMaxTemp(String? v) {
+    final basic = _validateTemp(v);
+    if (basic != null) return basic;
+    final maxVal = double.tryParse(v ?? '');
+    final minVal = double.tryParse(_tmin.text);
+    if (minVal != null && maxVal != null && minVal > maxVal) {
+      return 'Max Temp must be ≥ Min Temp';
+    }
+    return null;
+  }
+
+  String? _validateHumidity(String? v) {
+    if (v == null || v.isEmpty) return 'Required';
+    final value = double.tryParse(v);
+    if (value == null) return 'Please enter a valid number';
+    if (value < 0 || value > 100) return 'Humidity range: 0 – 100%';
+    return null;
+  }
+
+  String? _validateMaxHumidity(String? v) {
+    final basic = _validateHumidity(v);
+    if (basic != null) return basic;
+    final maxVal = double.tryParse(v ?? '');
+    final minVal = double.tryParse(_humMin.text);
+    if (minVal != null && maxVal != null && minVal > maxVal) {
+      return 'Max Humidity must be ≥ Min Humidity';
+    }
+    return null;
+  }
+
   String? _validateDuration(String? v) {
     if (v == null || v.isEmpty) return 'Required';
-    final value = int.tryParse(v);
+    final value = double.tryParse(v);
     if (value == null) return 'Please enter a valid number';
     if (value <= 0) return 'Duration must be greater than 0';
     return null;
@@ -1422,7 +1536,7 @@ class _AddProfilePageState extends State<AddProfilePage> {
                             keyboardType:
                                 const TextInputType.numberWithOptions(
                                     decimal: true),
-                            validator: _validateTemp,
+                            validator: _validateMaxTemp,
                           ),
                         ),
                       ],
@@ -1430,12 +1544,88 @@ class _AddProfilePageState extends State<AddProfilePage> {
 
                     const SizedBox(height: 12),
 
-                    TextFormField(
-                      controller: _days,
-                      decoration: _inputDecoration(
-                          'Duration (Minute) *', Icons.calendar_today),
-                      keyboardType: TextInputType.number,
-                      validator: _validateDuration,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _humMin,
+                            decoration: _inputDecoration(
+                                'Min Humidity (%) *', Icons.water_drop),
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
+                                    decimal: true),
+                            validator: _validateHumidity,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _humMax,
+                            decoration: _inputDecoration(
+                                'Max Humidity (%) *', Icons.water_drop),
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
+                                    decimal: true),
+                            validator: _validateMaxHumidity,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: TextFormField(
+                            controller: _durationValue,
+                            decoration: _inputDecoration(
+                                'Duration *', Icons.calendar_today),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            validator: _validateDuration,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 3,
+                          child: DropdownButtonFormField<String>(
+                            value: _durationUnit,
+                            isExpanded: true,
+                            isDense: true,
+                            decoration: InputDecoration(
+                              labelText: 'Unit',
+                              filled: true,
+                              fillColor: Colors.grey[100],
+                              contentPadding: const EdgeInsets.symmetric(
+                                  vertical: 14, horizontal: 12),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 'Minute', child: Text('Minute', overflow: TextOverflow.ellipsis)),
+                              DropdownMenuItem(value: 'Hour', child: Text('Hour', overflow: TextOverflow.ellipsis)),
+                              DropdownMenuItem(value: 'Day', child: Text('Day', overflow: TextOverflow.ellipsis)),
+                            ],
+                            onChanged: (v) {
+                              if (v != null) setState(() => _durationUnit = v);
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 4),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Tip: use Minute for quick testing',
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
                     ),
 
                     const SizedBox(height: 8),
@@ -1517,75 +1707,224 @@ class _ProfileListPageState extends State<ProfileListPage> {
     final ph = TextEditingController(text: p['target_ph']?.toString() ?? '0');
     final tmin = TextEditingController(text: p['target_temp_min']?.toString() ?? '0');
     final tmax = TextEditingController(text: p['target_temp_max']?.toString() ?? '0');
-    final days = TextEditingController(text: p['duration_minutes']?.toString() ?? '0');
+    final rawHumMin = double.tryParse(p['target_humidity_min']?.toString() ?? '');
+    final rawHumMax = double.tryParse(p['target_humidity_max']?.toString() ?? '');
+    final humMin = TextEditingController(
+        text: (rawHumMin ?? kDefaultHumidityMin).toStringAsFixed(0));
+    final humMax = TextEditingController(
+        text: (rawHumMax ?? kDefaultHumidityMax).toStringAsFixed(0));
+    final storedMinutes = int.tryParse(p['duration_minutes']?.toString() ?? '0') ?? 0;
+    String durationUnit = 'Hour';
+    double durationValue = storedMinutes / 60;
+    if (storedMinutes > 0 && storedMinutes % 1440 == 0) {
+      durationUnit = 'Day';
+      durationValue = storedMinutes / 1440;
+    }
+    final durationCtrl = TextEditingController(
+      text: durationValue == durationValue.roundToDouble()
+          ? durationValue.round().toString()
+          : durationValue.toString(),
+    );
+
+    final fieldDecoration = InputDecoration(
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.brown.shade200),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.brown.shade400, width: 1.5),
+      ),
+    );
+
+    final formKey = GlobalKey<FormState>();
+
+    String? validatePhEdit(String? v) {
+      final val = double.tryParse(v ?? '');
+      if (val == null) return 'Please enter a valid number';
+      if (val < 0 || val > 14) return 'pH range: 0 – 14';
+      return null;
+    }
+
+    String? validateTempEdit(String? v) {
+      final val = double.tryParse(v ?? '');
+      if (val == null) return 'Please enter a valid number';
+      if (val < -40 || val > 125) return 'Range: -40°C to 125°C';
+      return null;
+    }
+
+    String? validateMaxTempEdit(String? v) {
+      final basic = validateTempEdit(v);
+      if (basic != null) return basic;
+      final minVal = double.tryParse(tmin.text);
+      final maxVal = double.tryParse(v ?? '');
+      if (minVal != null && maxVal != null && minVal > maxVal) {
+        return 'Max Temp must be ≥ Min Temp';
+      }
+      return null;
+    }
+
+    String? validateHumidityEdit(String? v) {
+      final val = double.tryParse(v ?? '');
+      if (val == null) return 'Please enter a valid number';
+      if (val < 0 || val > 100) return 'Humidity range: 0 – 100%';
+      return null;
+    }
+
+    String? validateMaxHumidityEdit(String? v) {
+      final basic = validateHumidityEdit(v);
+      if (basic != null) return basic;
+      final minVal = double.tryParse(humMin.text);
+      final maxVal = double.tryParse(v ?? '');
+      if (minVal != null && maxVal != null && minVal > maxVal) {
+        return 'Max Humidity must be ≥ Min Humidity';
+      }
+      return null;
+    }
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit Profile'),
-        content: SingleChildScrollView(
-          child: Column(
-            children: [
-              TextField(controller: name, decoration: const InputDecoration(labelText: 'Name')),
-              TextField(controller: coffee, decoration: const InputDecoration(labelText: 'Coffee Variety')),
-              TextField(controller: ph, decoration: const InputDecoration(labelText: 'Target pH'), keyboardType: TextInputType.number),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: tmin,
-                      decoration: const InputDecoration(labelText: 'Min Temp (°C)'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Edit Profile', style: TextStyle(fontWeight: FontWeight.w600)),
+        content: SizedBox(
+          width: 380,
+          child: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: name,
+                  decoration: fieldDecoration.copyWith(labelText: 'Name'),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: coffee,
+                  decoration: fieldDecoration.copyWith(labelText: 'Coffee Variety'),
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: ph,
+                  decoration: fieldDecoration.copyWith(labelText: 'Target pH'),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  validator: validatePhEdit,
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: tmin,
+                        decoration: fieldDecoration.copyWith(labelText: 'Min Temp (°C)'),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        validator: validateTempEdit,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: tmax,
-                      decoration: const InputDecoration(labelText: 'Max Temp (°C)'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextFormField(
+                        controller: tmax,
+                        decoration: fieldDecoration.copyWith(labelText: 'Max Temp (°C)'),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        validator: validateMaxTempEdit,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: humMin,
+                        decoration: fieldDecoration.copyWith(labelText: 'Min Humidity (%)'),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        validator: validateHumidityEdit,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextFormField(
+                        controller: humMax,
+                        decoration: fieldDecoration.copyWith(labelText: 'Max Humidity (%)'),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        validator: validateMaxHumidityEdit,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextFormField(
+                        controller: durationCtrl,
+                        decoration: fieldDecoration.copyWith(labelText: 'Duration'),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        validator: (v) {
+                          final val = double.tryParse(v ?? '');
+                          if (val == null) return 'Please enter a valid number';
+                          if (val <= 0) return 'Must be > 0';
+                          return null;
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 3,
+                      child: DropdownButtonFormField<String>(
+                        value: durationUnit,
+                        isExpanded: true,
+                        isDense: true,
+                        decoration: fieldDecoration.copyWith(labelText: 'Unit'),
+                        items: const [
+                          DropdownMenuItem(value: 'Minute', child: Text('Minute', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'Hour', child: Text('Hour', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'Day', child: Text('Day', overflow: TextOverflow.ellipsis)),
+                        ],
+                        onChanged: (v) {
+                          if (v != null) setDialogState(() => durationUnit = v);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               ),
-              TextField(
-                controller: days,
-                decoration: const InputDecoration(labelText: 'Duration (minute)'),
-                keyboardType: TextInputType.number,
-              ),
-            ],
+            ),
           ),
         ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () async {
-              final double? phVal = double.tryParse(ph.text);
-              final double? tminVal = double.tryParse(tmin.text);
-              final double? tmaxVal = double.tryParse(tmax.text);
+              if (!formKey.currentState!.validate()) return;
 
-              // ===== VALIDASI/NOTIFIKASI JIKA RENTANG GAK SESUAI=====
-              if (phVal == null || phVal < 0 || phVal > 14) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Target pH must be between 0-14')));
-                return;
+              final double phVal = double.parse(ph.text);
+              final double tminVal = double.parse(tmin.text);
+              final double tmaxVal = double.parse(tmax.text);
+              final double humMinVal = double.parse(humMin.text);
+              final double humMaxVal = double.parse(humMax.text);
+
+              final double durationInput = double.parse(durationCtrl.text);
+              final int durationMinutes;
+              if (durationUnit == 'Day') {
+                durationMinutes = (durationInput * 1440).round();
+              } else if (durationUnit == 'Hour') {
+                durationMinutes = (durationInput * 60).round();
+              } else {
+                durationMinutes = durationInput.round(); // Minute (testing)
               }
-              if (tminVal == null || tminVal < -40 || tminVal > 125) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Max Temp range: -40°C to 125°C')));
-                return;
-              }
-              if (tmaxVal == null || tmaxVal < -40 || tmaxVal > 125) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Min Temp range: -40°C to 125°C')));
-                return;
-              }
-              if (tminVal > tmaxVal) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Min Temp cannot exceed Max Temp')));
-                return;
-              }
-              // ====================
 
               final payload = {
                 "id": p['id'],
@@ -1594,7 +1933,9 @@ class _ProfileListPageState extends State<ProfileListPage> {
                 "target_ph": phVal,
                 "target_temp_min": tminVal,
                 "target_temp_max": tmaxVal,
-                "duration_minutes": int.tryParse(days.text) ?? 0
+                "target_humidity_min": humMinVal,
+                "target_humidity_max": humMaxVal,
+                "duration_minutes": durationMinutes
               };
 
               final ok = await api.updateProfile(payload);
@@ -1609,6 +1950,7 @@ class _ProfileListPageState extends State<ProfileListPage> {
             child: const Text('Save'),
           )
         ],
+        ),
       ),
     );
   }
@@ -1652,7 +1994,11 @@ class _ProfileListPageState extends State<ProfileListPage> {
             margin: const EdgeInsets.symmetric(vertical: 6),
             child: ListTile(
               title: Text(p['name'] ?? ''),
-              subtitle: Text('Temp: ${p['target_temp_min'] ?? '-'}°C — ${p['target_temp_max'] ?? '-'}°C\npH target: ${p['target_ph'] ?? '-'}'),
+              subtitle: Text(
+                  'Temp: ${p['target_temp_min'] ?? '-'}°C — ${p['target_temp_max'] ?? '-'}°C\n'
+                  'Humidity: ${humidityTargetDisplay(p['target_humidity_min'], p['target_humidity_max'])}\n'
+                  'pH target: ${p['target_ph'] ?? '-'}\n'
+                  'Duration: ${formatDurationMinutes(p['duration_minutes'])}'),
               trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                 IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () => _edit(p)),
                 IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _delete(p)),
@@ -1748,6 +2094,10 @@ class _HistoryPageState extends State<HistoryPage> {
           final end = h['end_time'] ?? '-';
           final tmin = h['target_temp_min'] ?? h['target_temp'] ?? '-';
           final tmax = h['target_temp_max'] ?? '-';
+          final humidityTargetText =
+              humidityTargetDisplay(h['target_humidity_min'], h['target_humidity_max']);
+          final finalHumidityText = finalHumidityDisplay(
+              h['final_humidity'], h['target_humidity_min'], h['target_humidity_max']);
           final status = h['status'] ?? '-';
           final reason = h['reason'] ?? '';
 
@@ -1783,7 +2133,9 @@ class _HistoryPageState extends State<HistoryPage> {
                   Text('Start: $start\nEnd: $end'),
                   const SizedBox(height: 4),
                   Text('Target Temperature: $tmin — $tmax °C'),
+                  Text('Target Humidity: $humidityTargetText'),
                   Text('Final pH: ${h['final_ph'] ?? '-'}'),
+                  Text('Final Humidity: $finalHumidityText'),
                   if (reason.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 4.0),

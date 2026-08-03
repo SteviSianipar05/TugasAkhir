@@ -6,7 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
   // Root API (folder /api)
-  static const String apiRoot = 'http://10.128.45.199/api';
+  static const String apiRoot = 'http://localhost/api';
+  // static const String apiRoot = '10.23.83.199';
   // Legacy single-file base (profiles.php) - keep if some endpoints use query ?type=
   static const String baseProfiles = '$apiRoot/profiles.php';
 

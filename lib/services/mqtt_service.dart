@@ -3,7 +3,7 @@ import 'package:mqtt_client/mqtt_server_client.dart';
 import 'dart:convert';
 
 class MqttService {
-  final client = MqttServerClient('http://10.128.45.199:1880/mqtt_publish', '');
+  final client = MqttServerClient('http://10.23.83.199:1880/mqtt_publish', '');
 
   Future<void> connect() async {
     client.port = 1883;

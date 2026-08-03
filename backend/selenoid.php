@@ -39,7 +39,7 @@ $finalCommand = $commandMap[$cmd];
 // --- SYNC DENGAN NODE-RED ---
 // Node-RED HTTP IN berada di: /api/solenoid_cmd
 // Node-RED publish ke: ferment/app_solenoid_cmd
-$nodeRedUrl = "http://10.128.45.199:1880/api/selenoid";
+$nodeRedUrl = "http://10.23.83.199:1880/api/selenoid";
 
 // Kirim data ke Node-RED
 $ch = curl_init($nodeRedUrl);

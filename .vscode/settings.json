@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "C:/Users/STEVI GREIS/Desktop/KULIAH/SKS_TINGKAT3_SEM5/Tugas Akhir 1 (TA 1)/FLUTTER APK/tugasakhir/linux"
+    "cmake.sourceDirectory": "C:/Users/STEVI GREIS/Desktop/KULIAH/SKS_TINGKAT3_SEM5/Tugas Akhir 1 (TA 1)/FLUTTER APK/tugasakhir/linux",
+    "idf.currentSetup": "C:\\TA1\\esp\\v5.5.1\\esp-idf"
 }

@@ -18,7 +18,7 @@ $status     = isset($input['status']) ? intval($input['status']) : null;
 $user_id    = intval($input['user_id'] ?? 0);
 
 if (!$profile_id || !isset($status)) {
-    echo json_encode(["success" => false, "message" => "profile_id and status required"]);
+    echo json_encodefli(["success" => false, "message" => "profile_id and status required"]);
     exit;
 }
 
@@ -81,7 +81,7 @@ if ($status == 1) {
 }
 
 // SEND MQTT via mqtt_publish.php
-$ch = curl_init("http://10.66.62.199/api/mqtt_publish.php");
+$ch = curl_init("http://10.23.83.199/api/mqtt_publish.php");
 curl_setopt($ch, CURLOPT_POST, true);
 curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
     "topic" => "ferment/control",

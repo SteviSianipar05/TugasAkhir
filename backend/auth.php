@@ -19,7 +19,7 @@ switch ($method) {
             $password = $input['password'] ?? '';
 
             if (empty($username) || empty($email) || empty($password)) {
-                echo json_encode(['success' => false, 'message' => 'Lengkapi semua field']);
+                echo json_encode(['success' => false, 'message' => 'All fields are required']);
                 exit;
             }
 
@@ -29,9 +29,9 @@ switch ($method) {
             $stmt->bind_param("sss", $username, $email, $hashed);
 
             if ($stmt->execute()) {
-                echo json_encode(['success' => true, 'message' => 'Registrasi berhasil']);
+                echo json_encode(['success' => true, 'message' => 'Registration successful']);
             } else {
-                echo json_encode(['success' => false, 'message' => 'Username/email sudah digunakan']);
+                echo json_encode(['success' => false, 'message' => 'Username or email already in use']);
             }
             $stmt->close();
 
@@ -57,18 +57,18 @@ switch ($method) {
                     ]
                 ]);
             } else {
-                echo json_encode(['success' => false, 'message' => 'Username atau password salah']);
+                echo json_encode(['success' => false, 'message' => 'Incorrect username or password']);
             }
 
             $stmt->close();
 
         } else {
-            echo json_encode(['success' => false, 'message' => 'Aksi tidak dikenali']);
+            echo json_encode(['success' => false, 'message' => 'Unknown action']);
         }
         break;
 
     default:
-        echo json_encode(['success' => false, 'message' => 'Metode tidak diizinkan']);
+        echo json_encode(['success' => false, 'message' => 'Method not allowed']);
         break;
 }
 
